@@ -4,6 +4,7 @@ import {
   markMessageDeleted,
   insertMessage
 } from "../repositories/message.repository.js";
+import { awarenessQueue } from "../queues/awareness.queue.js";
 
 export async function handleIncomingMessage(event, body) {
   try {
@@ -15,6 +16,14 @@ export async function handleIncomingMessage(event, body) {
 
     console.log("💾 Message saved with ID:", savedMessage.id);
 
+    console.log("📤 Pushing message to awareness queue:", savedMessage.id);
+
+    await awarenessQueue.add("classify", {
+      messageId: savedMessage.id
+    });
+
+    console.log("✅ Job added to awareness queue");
+    
     return savedMessage;
   } catch (error) {
     console.error("❌ Failed to handle incoming message:", error);
