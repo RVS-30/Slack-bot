@@ -208,3 +208,18 @@ export async function deleteThreadEmbedding(workspaceId, channelId, threadTs) {
     [workspaceId, channelId, threadTs]
   );
 }
+
+//search threads - for RAG
+export async function searchThreads(workspaceId, embedding, limit = 5) {
+  const { rows } = await pool.query(
+    `SELECT thread_ts, channel_id, content, message_count, last_message_at,
+            1 - (embedding <=> $2::vector) AS similarity
+     FROM thread_embeddings
+     WHERE workspace_id = $1
+       AND embedding IS NOT NULL
+     ORDER BY embedding <=> $2::vector
+     LIMIT $3`,
+    [workspaceId, JSON.stringify(embedding), limit]
+  );
+  return rows;
+}
