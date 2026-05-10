@@ -23,11 +23,11 @@ Classify the Slack message.
 Return ONLY valid JSON.
 
 Message Types:
-decision
-task
-question
-information
-conversation
+- decision → a conclusion that has been reached or agreed upon (e.g. "We will use React", "Agreed, deploying on Friday")
+- task → an action item assigned or committed to
+- question → someone asking for information or input
+- information → a factual update or announcement
+- conversation → general chat, greetings, reactions
 
 Extract:
 message_type

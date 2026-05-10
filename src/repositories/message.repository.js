@@ -248,3 +248,30 @@ export async function getUsersByIds(workspaceId, userIds) {
   );
   return Object.fromEntries(rows.map(r => [r.user_id, r.display_name]));
 }
+
+// Insert memory query
+export async function insertMemoryQuery(workspaceId, userId, channelId, question, answer, threadsUsed) {
+  await pool.query(
+    `INSERT INTO memory_queries
+      (workspace_id, user_id, channel_id, question, answer, threads_used, responded_at)
+     VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+    [workspaceId, userId, channelId, question, answer, threadsUsed]
+  );
+}
+
+// Fetch recent decisions for a workspace
+export async function getDecisions(workspaceId, limit = 10) {
+  const { rows } = await pool.query(
+    `SELECT m.user_id, m.text, m.importance_score, m.entities, m.topic_tags, m.slack_timestamp,
+            u.display_name
+     FROM messages m
+     LEFT JOIN users u ON u.user_id = m.user_id AND u.workspace_id = m.workspace_id
+     WHERE m.workspace_id = $1
+       AND m.message_type = 'decision'
+       AND m.deleted = false
+     ORDER BY m.slack_timestamp DESC
+     LIMIT $2`,
+    [workspaceId, limit]
+  );
+  return rows;
+}
