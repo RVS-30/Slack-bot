@@ -40,7 +40,7 @@ export async function updateMessageText({
   channel_id,
   slack_timestamp,
   text,
-  raw_payload
+  raw_payload,
 }) {
   const query = `
     UPDATE messages
@@ -54,13 +54,7 @@ export async function updateMessageText({
     RETURNING id, thread_ts, slack_timestamp;
   `;
 
-  const values = [
-    text,
-    raw_payload,
-    workspace_id,
-    channel_id,
-    slack_timestamp
-  ];
+  const values = [text, raw_payload, workspace_id, channel_id, slack_timestamp];
 
   const result = await pool.query(query, values);
   return result.rows[0];
@@ -70,7 +64,7 @@ export async function updateMessageText({
 export async function markMessageDeleted({
   workspace_id,
   channel_id,
-  slack_timestamp
+  slack_timestamp,
 }) {
   const query = `
     UPDATE messages
@@ -83,11 +77,7 @@ export async function markMessageDeleted({
     RETURNING id, thread_ts, slack_timestamp;
   `;
 
-  const values = [
-    workspace_id,
-    channel_id,
-    slack_timestamp
-  ];
+  const values = [workspace_id, channel_id, slack_timestamp];
 
   const result = await pool.query(query, values);
   return result.rows[0];
@@ -99,7 +89,7 @@ export async function getMessageById(messageId) {
     `SELECT id, text, user_id, workspace_id, channel_id, thread_ts, slack_timestamp
      FROM messages
      WHERE id = $1 AND processed = false`,
-    [messageId]
+    [messageId],
   );
   return rows[0] || null;
 }
@@ -121,7 +111,7 @@ export async function updateMessageEnrichment(messageId, awareness) {
       JSON.stringify(awareness.entities),
       JSON.stringify(awareness.topic_tags),
       messageId,
-    ]
+    ],
   );
 }
 
@@ -135,7 +125,7 @@ export async function getThreadMessages(workspaceId, channelId, threadTs) {
        AND thread_ts = $3
        AND deleted = false
      ORDER BY slack_timestamp ASC`,
-    [workspaceId, channelId, threadTs]
+    [workspaceId, channelId, threadTs],
   );
   return rows;
 }
@@ -150,7 +140,7 @@ export async function upsertThreadDirty(workspaceId, channelId, threadTs) {
        needs_embedding = true,
        updated_at = NOW()
      WHERE thread_embeddings.needs_embedding = false`,
-    [workspaceId, channelId, threadTs]
+    [workspaceId, channelId, threadTs],
   );
 }
 
@@ -159,7 +149,7 @@ export async function getDirtyThreads() {
   const { rows } = await pool.query(
     `SELECT workspace_id, channel_id, thread_ts
      FROM thread_embeddings
-     WHERE needs_embedding = true`
+     WHERE needs_embedding = true`,
   );
   return rows;
 }
@@ -180,7 +170,14 @@ export async function getDirtyThreads() {
 // }
 
 //Upsert thread embedding
-export async function upsertThreadEmbedding(workspaceId, channelId, threadTs, content, embedding, messageCount) {
+export async function upsertThreadEmbedding(
+  workspaceId,
+  channelId,
+  threadTs,
+  content,
+  embedding,
+  messageCount,
+) {
   await pool.query(
     `INSERT INTO thread_embeddings
       (workspace_id, channel_id, thread_ts, content, embedding, message_count, last_message_at, needs_embedding, embedded_at, updated_at)
@@ -194,7 +191,14 @@ export async function upsertThreadEmbedding(workspaceId, channelId, threadTs, co
        needs_embedding = false,
        embedded_at = NOW(),
        updated_at = NOW()`,
-    [workspaceId, channelId, threadTs, content, JSON.stringify(embedding), messageCount]
+    [
+      workspaceId,
+      channelId,
+      threadTs,
+      content,
+      JSON.stringify(embedding),
+      messageCount,
+    ],
   );
 }
 
@@ -205,7 +209,7 @@ export async function deleteThreadEmbedding(workspaceId, channelId, threadTs) {
      WHERE workspace_id = $1
        AND channel_id = $2
        AND thread_ts = $3`,
-    [workspaceId, channelId, threadTs]
+    [workspaceId, channelId, threadTs],
   );
 }
 
@@ -219,7 +223,7 @@ export async function searchThreads(workspaceId, embedding, limit = 5) {
        AND embedding IS NOT NULL
      ORDER BY embedding <=> $2::vector
      LIMIT $3`,
-    [workspaceId, JSON.stringify(embedding), limit]
+    [workspaceId, JSON.stringify(embedding), limit],
   );
   return rows;
 }
@@ -233,7 +237,7 @@ export async function upsertUser(workspaceId, userId, displayName, avatarUrl) {
        display_name = EXCLUDED.display_name,
        avatar_url = EXCLUDED.avatar_url,
        fetched_at = NOW()`,
-    [workspaceId, userId, displayName, avatarUrl]
+    [workspaceId, userId, displayName, avatarUrl],
   );
 }
 
@@ -244,18 +248,25 @@ export async function getUsersByIds(workspaceId, userIds) {
      FROM users
      WHERE workspace_id = $1
        AND user_id = ANY($2::text[])`,
-    [workspaceId, userIds]
+    [workspaceId, userIds],
   );
-  return Object.fromEntries(rows.map(r => [r.user_id, r.display_name]));
+  return Object.fromEntries(rows.map((r) => [r.user_id, r.display_name]));
 }
 
 // Insert memory query
-export async function insertMemoryQuery(workspaceId, userId, channelId, question, answer, threadsUsed) {
+export async function insertMemoryQuery(
+  workspaceId,
+  userId,
+  channelId,
+  question,
+  answer,
+  threadsUsed,
+) {
   await pool.query(
     `INSERT INTO memory_queries
       (workspace_id, user_id, channel_id, question, answer, threads_used, responded_at)
      VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-    [workspaceId, userId, channelId, question, answer, threadsUsed]
+    [workspaceId, userId, channelId, question, answer, threadsUsed],
   );
 }
 
@@ -271,7 +282,25 @@ export async function getDecisions(workspaceId, limit = 10) {
        AND m.deleted = false
      ORDER BY m.slack_timestamp DESC
      LIMIT $2`,
-    [workspaceId, limit]
+    [workspaceId, limit],
+  );
+  return rows;
+}
+
+// Fetch messages for summarization — current channel, last 7 days
+export async function getSummaryMessages(workspaceId, channelId, from, to) {
+  const { rows } = await pool.query(
+    `SELECT m.user_id, m.text, m.message_type, m.importance_score, m.topic_tags, m.slack_timestamp,
+            u.display_name
+     FROM messages m
+     LEFT JOIN users u ON u.user_id = m.user_id AND u.workspace_id = m.workspace_id
+     WHERE m.workspace_id = $1
+       AND m.channel_id = $2
+       AND m.deleted = false
+       AND m.slack_timestamp::numeric >= $3
+       AND m.slack_timestamp::numeric <= $4
+     ORDER BY m.slack_timestamp ASC`,
+    [workspaceId, channelId, from, to],
   );
   return rows;
 }
