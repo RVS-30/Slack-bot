@@ -1,6 +1,11 @@
 import { GoogleGenAI } from "@google/genai";
 import { config } from "../config/environment.js";
 import { getSummaryMessages } from "../repositories/message.repository.js";
+import {
+  getContextForCommand,
+  formatContextForPrompt,
+  logInteraction,
+} from "./context.service.js";
 
 const genAI = new GoogleGenAI({ apiKey: config.geminiApiKey });
 
@@ -41,7 +46,7 @@ function formatMessagesForPrompt(rows) {
     .join("\n");
 }
 
-export async function summarizeChannel(workspaceId, channelId) {
+export async function summarizeChannel(workspaceId, userId, channelId) {
   const toUnix = Date.now() / 1000;
   const fromUnix = toUnix - 7 * 24 * 60 * 60;
 
@@ -49,6 +54,13 @@ export async function summarizeChannel(workspaceId, channelId) {
     `${CYAN}📋 Summary request — workspace: ${workspaceId} | channel: ${channelId}${RESET}`,
   );
   console.log(`${CYAN}   Range: ${fromUnix} to ${toUnix}${RESET}`);
+
+  // Fetch session context
+  const contextRows = await getContextForCommand(workspaceId, userId, channelId, "summarize");
+  const priorContext = formatContextForPrompt(contextRows);
+  if (priorContext) {
+    console.log(`${CYAN}   ↳ Prior context entries: ${contextRows.length}${RESET}`);
+  }
 
   const messages = await getSummaryMessages(
     workspaceId,
@@ -59,7 +71,9 @@ export async function summarizeChannel(workspaceId, channelId) {
   console.log(`${YELLOW}   ↳ Messages fetched: ${messages.length}${RESET}`);
 
   if (messages.length === 0) {
-    return "No messages found in this channel over the last 7 days.";
+    const fallback = "No messages found in this channel over the last 7 days.";
+    logInteraction(workspaceId, userId, channelId, "summarize", null, fallback, { messageCount: 0 });
+    return fallback;
   }
 
   const formatted = formatMessagesForPrompt(messages);
@@ -67,7 +81,13 @@ export async function summarizeChannel(workspaceId, channelId) {
   const prompt = `You are a workspace memory assistant summarizing a Slack channel.
 Today is ${new Date(toUnix * 1000).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}.
 The messages below are from the last 7 days.
+${priorContext ? `
+The user has recently interacted with MemGo in this channel. Use this as conversational context — for example, if they previously asked a question or ran a summary, factor that in:
 
+--- Prior Session Context ---
+${priorContext}
+--- End Prior Context ---
+` : ""}
 Produce a concise summary with these sections — only include a section if there is relevant content:
 
 **Decisions Made** — List any decisions that were reached.
@@ -80,6 +100,9 @@ Guidelines:
 - Where relevant, attribute to the person by name.
 - Skip any section that has no content — do not include empty headers.
 - Do not pad or add filler. If the channel was quiet, say so briefly.
+- Every message has a timestamp. Use it. Reason about when something was said relative to today.
+- Time-bound statements (e.g. "I'll do it today", "by end of week", "tomorrow") must be reframed relative to today's date — do not quote them literally. If the deadline has passed, flag it as potentially overdue. If it's still upcoming, state the original date explicitly.
+- Do not present past commitments as current facts. "X said they would finish by May 20" is not the same as "X has finished."
 
 Messages:
 ${formatted}`;
@@ -94,6 +117,9 @@ ${formatted}`;
     console.log(
       `${GREEN}   ↳ Summary generated (${summary.length} chars)${RESET}`,
     );
+
+    // Non-blocking log
+    logInteraction(workspaceId, userId, channelId, "summarize", null, summary, { messageCount: messages.length });
 
     return summary;
   } catch (err) {

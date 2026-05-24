@@ -304,3 +304,22 @@ export async function getSummaryMessages(workspaceId, channelId, from, to) {
   );
   return rows;
 }
+
+// Hybrid search — vector similarity + keyword fallback
+export async function searchHybrid(workspaceId, embedding, keyword, limit = 5) {
+  const { rows } = await pool.query(
+    `SELECT thread_ts, channel_id, content, message_count, last_message_at,
+            1 - (embedding <=> $2::vector) AS similarity
+     FROM thread_embeddings
+     WHERE workspace_id = $1
+       AND embedding IS NOT NULL
+       AND (
+         (embedding <=> $2::vector) < 0.5
+         OR content ILIKE $3
+       )
+     ORDER BY embedding <=> $2::vector
+     LIMIT $4`,
+    [workspaceId, JSON.stringify(embedding), `%${keyword}%`, limit]
+  );
+  return rows;
+}

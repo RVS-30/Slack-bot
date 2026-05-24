@@ -1,7 +1,8 @@
 import { answerFromMemory } from "../../services/rag.service.js";
 import { getDecisions } from "../../repositories/message.repository.js";
 import { summarizeChannel } from "../../services/summary.service.js";
-
+import { logInteraction } from "../../services/context.service.js";
+import { searchMemory } from "../../services/search.service.js";
 export function registerMemoryCommand(app) {
   app.command("/memory", async ({ command, ack, respond }) => {
     await ack();
@@ -73,6 +74,17 @@ export function registerMemoryCommand(app) {
           },
         ],
       });
+
+      // Non-blocking log
+      logInteraction(
+        command.team_id,
+        command.user_id,
+        command.channel_id,
+        "decisions",
+        null,
+        decisions.map((d) => d.text).join("\n"),
+        { decisionCount: decisions.length },
+      );
 
       try {
         const decisions = await getDecisions(command.team_id, 10);
@@ -171,10 +183,7 @@ export function registerMemoryCommand(app) {
       });
 
       try {
-        const summary = await summarizeChannel(
-          command.team_id,
-          command.channel_id,
-        );
+        summarizeChannel(command.team_id, command.user_id, command.channel_id);
 
         await respond({
           replace_original: true,
@@ -206,6 +215,101 @@ export function registerMemoryCommand(app) {
           text: err.message,
         });
       }
+    }
+
+    if (subcommand === "search") {
+      if (!query) {
+        await respond("Usage: `/memory search <your query>`");
+        return;
+      }
+
+      await respond({
+        blocks: [
+          {
+            type: "section",
+            text: { type: "mrkdwn", text: `*Searching workspace memory...*` },
+          },
+        ],
+      });
+
+      try {
+        const { results } = await searchMemory(
+          command.team_id,
+          command.user_id,
+          command.channel_id,
+          query,
+        );
+
+        if (results.length === 0) {
+          await respond({
+            replace_original: true,
+            blocks: [
+              {
+                type: "section",
+                text: {
+                  type: "mrkdwn",
+                  text: `No matching threads found for *"${query}"*.`,
+                },
+              },
+            ],
+          });
+          return;
+        }
+
+        const resultBlocks = results.flatMap((r) => [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text:
+                r.content.length > 300
+                  ? r.content.slice(0, 300) + "..."
+                  : r.content,
+            },
+          },
+          {
+            type: "context",
+            elements: [
+              {
+                type: "mrkdwn",
+                text: `<#${r.channel_id}> · ${r.message_count} message(s) · Last activity: ${r.last_message_at} · ${r.similarity}% match`,
+              },
+            ],
+          },
+          { type: "divider" },
+        ]);
+
+        await respond({
+          replace_original: true,
+          blocks: [
+            {
+              type: "header",
+              text: { type: "plain_text", text: "Search Results" },
+            },
+            {
+              type: "section",
+              text: { type: "mrkdwn", text: `Results for *"${query}"*` },
+            },
+            ...resultBlocks,
+            {
+              type: "context",
+              elements: [
+                {
+                  type: "mrkdwn",
+                  text: `MemGo · ${results.length} result(s) · <@${command.user_id}> · <!date^${Math.floor(Date.now() / 1000)}^{time}|now>`,
+                },
+              ],
+            },
+          ],
+        });
+      } catch (err) {
+        console.error("❌ /memory search error:", err);
+        await respond({
+          replace_original: true,
+          text: err.message,
+        });
+      }
+      return;
     }
 
     if (subcommand === "help") {

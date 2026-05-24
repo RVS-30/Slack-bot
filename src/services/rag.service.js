@@ -1,9 +1,11 @@
 import { GoogleGenAI } from "@google/genai";
 import { config } from "../config/environment.js";
+import { searchThreads } from "../repositories/message.repository.js";
 import {
-  searchThreads,
-  insertMemoryQuery,
-} from "../repositories/message.repository.js";
+  getContextForCommand,
+  formatContextForPrompt,
+  logInteraction,
+} from "./context.service.js";
 
 const genAI = new GoogleGenAI({ apiKey: config.geminiApiKey });
 
@@ -34,6 +36,13 @@ export async function answerFromMemory(
   );
   console.log(`${CYAN}   Q: "${question}"${RESET}`);
 
+  // Fetch session context
+  const contextRows = await getContextForCommand(workspaceId, userId, channelId, "ask");
+  const priorContext = formatContextForPrompt(contextRows);
+  if (priorContext) {
+    console.log(`${CYAN}   ↳ Prior context entries: ${contextRows.length}${RESET}`);
+  }
+
   let questionVector;
 
   try {
@@ -54,7 +63,7 @@ export async function answerFromMemory(
   if (threads.length === 0) {
     const fallback =
       "No relevant memory found yet. Send some messages in Slack, wait a few minutes, and try again.";
-    insertMemoryQuery(workspaceId, userId, channelId, question, fallback, 0);
+    logInteraction(workspaceId, userId, channelId, "ask", question, fallback, { threadsUsed: 0 });
     return fallback;
   }
 
@@ -64,16 +73,26 @@ export async function answerFromMemory(
 
   const prompt = `You are a workspace memory assistant for a Slack workspace.
 Today is ${new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}.
+${priorContext ? `
+The user has recently interacted with MemGo in this channel. Use this as conversational context to resolve references and avoid asking for information already established:
 
-Answer the question using ONLY the context below. If the answer is not in the context, say so clearly.
+--- Prior Session Context ---
+${priorContext}
+--- End Prior Context ---
+` : ""}
+Answer the question using ONLY the workspace memory context below. If the answer is not in the context, say so clearly.
 Be concise and direct.
 
 Guidelines:
 - Where relevant, mention who said something by name.
 - Where relevant, mention when something was discussed if the timing adds useful context.
 - Do not force attribution or timestamps where they don't add value.
+- Every piece of context has a timestamp. Use it. Reason about when something was said relative to today.
+- Time-bound statements must be reframed relative to today. Do not quote "I'll do it today" if it was said 3 days ago — interpret it against the actual date it was written.
+- Do not present past commitments as current facts without qualification.
+- If the user's question references something from the prior session context above, use it to resolve the reference — do not ask for clarification if the answer is already there.
 
-Context:
+Workspace Memory Context:
 ${context}
 
 Question: ${question}`;
@@ -91,14 +110,7 @@ Question: ${question}`;
     );
 
     // Non-blocking log
-    insertMemoryQuery(
-      workspaceId,
-      userId,
-      channelId,
-      question,
-      answer,
-      threads.length,
-    );
+    logInteraction(workspaceId, userId, channelId, "ask", question, answer, { threadsUsed: threads.length });
 
     return answer;
   } catch (err) {
