@@ -27,6 +27,15 @@ async function resolveAndCacheUser(client, workspaceId, userId) {
 
 export async function handleIncomingMessage(event, body, client) {
   try {
+
+    // Security — never store DMs or multi-party DMs
+    // DM content is private by definition and must never enter the memory pipeline
+    if (event.channel_type === "im" || event.channel_type === "mpim") {
+      console.log(`🔒 Skipping DM message — channel_type: ${event.channel_type}`);
+      return;
+    }
+
+    // Save message
     const messageEntity = createMessageEntity(event, body);
     const savedMessage = await insertMessage(messageEntity);
     console.log("💾 Message saved with ID:", savedMessage.id);

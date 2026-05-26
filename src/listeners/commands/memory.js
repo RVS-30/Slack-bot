@@ -31,6 +31,7 @@ export function registerMemoryCommand(app) {
           command.user_id,
           command.channel_id,
           query,
+          client
         );
         await respond({
           replace_original: true,
@@ -191,6 +192,7 @@ export function registerMemoryCommand(app) {
           command.team_id,
           command.user_id,
           command.channel_id,
+          client
         );
 
         const wasTruncated = summary.length > 2900;
@@ -278,6 +280,7 @@ export function registerMemoryCommand(app) {
           command.user_id,
           command.channel_id,
           query,
+          client,
         );
 
         if (results.length === 0) {

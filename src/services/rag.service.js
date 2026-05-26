@@ -6,6 +6,7 @@ import {
   formatContextForPrompt,
   logInteraction,
 } from "./context.service.js";
+import { resolveAccessibleChannels } from "./membership.service.js";
 
 const genAI = new GoogleGenAI({ apiKey: config.geminiApiKey });
 
@@ -30,6 +31,7 @@ export async function answerFromMemory(
   userId,
   channelId,
   question,
+  client,
 ) {
   console.log(
     `${CYAN}🔍 Memory query — workspace: ${workspaceId} | user: ${userId}${RESET}`,
@@ -42,12 +44,29 @@ export async function answerFromMemory(
     userId,
     channelId,
     "ask",
+    client
   );
   const priorContext = formatContextForPrompt(contextRows);
   if (priorContext) {
     console.log(
       `${CYAN}   ↳ Prior context entries: ${contextRows.length}${RESET}`,
     );
+  }
+
+  const allowedChannels = await resolveAccessibleChannels(
+    client,
+    workspaceId,
+    userId,
+  );
+
+  if (allowedChannels.length === 0) {
+    const fallback =
+      "You don't appear to be a member of any channels yet. Join some channels and try again.";
+    logInteraction(workspaceId, userId, channelId, "ask", question, fallback, {
+      threadsUsed: 0,
+       channelsExposed: [],
+    });
+    return fallback;
   }
 
   let questionVector;
@@ -64,7 +83,12 @@ export async function answerFromMemory(
     throw new Error(classifyError(err));
   }
 
-  const threads = await searchThreads(workspaceId, questionVector, 5);
+  const threads = await searchThreads(
+    workspaceId,
+    questionVector,
+    allowedChannels,
+    5,
+  );
   console.log(`${YELLOW}   ↳ Threads retrieved: ${threads.length}${RESET}`);
 
   // Dedup — remove threads already seen in prior session context
@@ -83,6 +107,7 @@ export async function answerFromMemory(
       "No relevant memory found yet. Send some messages in Slack, wait a few minutes, and try again.";
     logInteraction(workspaceId, userId, channelId, "ask", question, fallback, {
       threadsUsed: 0,
+      channelsExposed: [],
     });
     return fallback;
   }
@@ -134,8 +159,10 @@ Question: ${question}`;
     );
 
     // Non-blocking log
+    const channelsExposed = [...new Set(dedupedThreads.map((t) => t.channel_id))];
     logInteraction(workspaceId, userId, channelId, "ask", question, answer, {
       threadsUsed: dedupedThreads.length,
+      channelsExposed,
     });
 
     return answer;

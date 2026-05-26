@@ -6,6 +6,7 @@ import {
   formatContextForPrompt,
   logInteraction,
 } from "./context.service.js";
+import { resolveAccessibleChannels } from "./membership.service.js";
 
 const genAI = new GoogleGenAI({ apiKey: config.geminiApiKey });
 
@@ -46,17 +47,47 @@ function formatResultsForSlack(rows) {
   });
 }
 
-export async function searchMemory(workspaceId, userId, channelId, query) {
+export async function searchMemory(
+  workspaceId,
+  userId,
+  channelId,
+  query,
+  client,
+) {
   console.log(
     `${CYAN}🔎 Search query — workspace: ${workspaceId} | user: ${userId}${RESET}`,
   );
   console.log(`${CYAN}   Q: "${query}"${RESET}`);
 
   // Fetch session context
-  const contextRows = await getContextForCommand(workspaceId, userId, channelId, "search");
+  const contextRows = await getContextForCommand(
+    workspaceId,
+    userId,
+    channelId,
+    "search",
+    client,
+  );
   const priorContext = formatContextForPrompt(contextRows);
   if (priorContext) {
-    console.log(`${CYAN}   ↳ Prior context entries: ${contextRows.length}${RESET}`);
+    console.log(
+      `${CYAN}   ↳ Prior context entries: ${contextRows.length}${RESET}`,
+    );
+  }
+
+  const allowedChannels = await resolveAccessibleChannels(
+    client,
+    workspaceId,
+    userId,
+  );
+
+  if (allowedChannels.length === 0) {
+    const fallback =
+      "You don't appear to be a member of any channels yet. Join some channels and try again.";
+    logInteraction(workspaceId, userId, channelId, "search", query, fallback, {
+      resultCount: 0,
+      channelsExposed: [],
+    });
+    return { results: [], formatted: [] };
   }
 
   let queryVector;
@@ -73,25 +104,45 @@ export async function searchMemory(workspaceId, userId, channelId, query) {
     throw new Error(classifyError(err));
   }
 
-  const results = await searchHybrid(workspaceId, queryVector, query, 5);
+  const results = await searchHybrid(
+    workspaceId,
+    queryVector,
+    query,
+    allowedChannels,
+    5,
+  );
   console.log(`${YELLOW}   ↳ Results found: ${results.length}${RESET}`);
 
   if (results.length === 0) {
     const fallback = "No matching threads found for your search.";
-    logInteraction(workspaceId, userId, channelId, "search", query, fallback, { resultCount: 0 });
+    logInteraction(workspaceId, userId, channelId, "search", query, fallback, {
+      resultCount: 0,
+      channelsExposed: [],
+    });
     return { results: [], formatted: [] };
   }
 
   const formatted = formatResultsForSlack(results);
 
-  console.log(`${GREEN}   ↳ Search complete (${formatted.length} results)${RESET}`);
+  console.log(
+    `${GREEN}   ↳ Search complete (${formatted.length} results)${RESET}`,
+  );
 
   // Non-blocking log — store top result contents as output for future context
   const outputSummary = formatted
     .map((r, i) => `[Result ${i + 1}] ${r.content.slice(0, 200)}`)
     .join("\n\n");
 
-  logInteraction(workspaceId, userId, channelId, "search", query, outputSummary, { resultCount: formatted.length });
+  const channelsExposed = [...new Set(results.map((r) => r.channel_id))];
+  logInteraction(
+    workspaceId,
+    userId,
+    channelId,
+    "search",
+    query,
+    outputSummary,
+    { resultCount: formatted.length, channelsExposed },
+  );
 
   return { results: formatted, priorContext };
 }

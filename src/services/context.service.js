@@ -1,4 +1,5 @@
 import pool from "../config/database.js";
+import { getAccessibleChannels } from "../repositories/message.repository.js";
 
 // Registry — each command declares what context types it cares about.
 // To add a new command: add one entry here. Nothing else changes.
@@ -34,8 +35,20 @@ export async function getContextForCommand(workspaceId, userId, channelId, comma
     [workspaceId, userId, channelId, relevantTypes, windowStart, SESSION_MAX_ENTRIES]
   );
 
-  // Return chronological order — oldest first, so prompt reads naturally
-  return rows.reverse();
+    // Re-validate channel access if client is available
+  // Filters out interactions from channels the user no longer has access to
+  let validRows = rows;
+  if (client) {
+    const accessibleChannels = await getAccessibleChannels(workspaceId, userId);
+    const accessibleSet = new Set(accessibleChannels);
+    validRows = rows.filter((r) => accessibleSet.has(r.channel_id));
+
+    if (validRows.length !== rows.length) {
+      console.warn(`⚠️ Context window filtered — ${rows.length - validRows.length} stale interaction(s) removed for user: ${userId}`);
+    }
+  }
+
+  return validRows.reverse(); // Return chronological order — oldest first, so prompt reads naturally
 }
 
 // Format context rows into a prompt-injectable string

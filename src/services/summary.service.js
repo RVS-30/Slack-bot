@@ -46,7 +46,7 @@ function formatMessagesForPrompt(rows) {
     .join("\n");
 }
 
-export async function summarizeChannel(workspaceId, userId, channelId) {
+export async function summarizeChannel(workspaceId, userId, channelId, client) {
   const toUnix = Date.now() / 1000;
   const fromUnix = toUnix - 7 * 24 * 60 * 60;
 
@@ -56,10 +56,18 @@ export async function summarizeChannel(workspaceId, userId, channelId) {
   console.log(`${CYAN}   Range: ${fromUnix} to ${toUnix}${RESET}`);
 
   // Fetch session context
-  const contextRows = await getContextForCommand(workspaceId, userId, channelId, "summarize");
+  const contextRows = await getContextForCommand(
+    workspaceId,
+    userId,
+    channelId,
+    "summarize",
+    client,
+  );
   const priorContext = formatContextForPrompt(contextRows);
   if (priorContext) {
-    console.log(`${CYAN}   ↳ Prior context entries: ${contextRows.length}${RESET}`);
+    console.log(
+      `${CYAN}   ↳ Prior context entries: ${contextRows.length}${RESET}`,
+    );
   }
 
   const messages = await getSummaryMessages(
@@ -72,7 +80,15 @@ export async function summarizeChannel(workspaceId, userId, channelId) {
 
   if (messages.length === 0) {
     const fallback = "No messages found in this channel over the last 7 days.";
-    logInteraction(workspaceId, userId, channelId, "summarize", null, fallback, { messageCount: 0 });
+    logInteraction(
+      workspaceId,
+      userId,
+      channelId,
+      "summarize",
+      null,
+      fallback,
+      { messageCount: 0 },
+    );
     return fallback;
   }
 
@@ -81,13 +97,17 @@ export async function summarizeChannel(workspaceId, userId, channelId) {
   const prompt = `You are a workspace memory assistant summarizing a Slack channel.
 Today is ${new Date(toUnix * 1000).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}.
 The messages below are from the last 7 days.
-${priorContext ? `
+${
+  priorContext
+    ? `
 The user has recently interacted with MemGo in this channel. Use this as conversational context — for example, if they previously asked a question or ran a summary, factor that in:
 
 --- Prior Session Context ---
 ${priorContext}
 --- End Prior Context ---
-` : ""}
+`
+    : ""
+}
 Produce a concise summary with these sections — only include a section if there is relevant content:
 
 **Decisions Made** — List any decisions that were reached.
@@ -119,7 +139,9 @@ ${formatted}`;
     );
 
     // Non-blocking log
-    logInteraction(workspaceId, userId, channelId, "summarize", null, summary, { messageCount: messages.length });
+    logInteraction(workspaceId, userId, channelId, "summarize", null, summary, {
+      messageCount: messages.length,
+    });
 
     return summary;
   } catch (err) {

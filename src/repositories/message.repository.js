@@ -214,16 +214,17 @@ export async function deleteThreadEmbedding(workspaceId, channelId, threadTs) {
 }
 
 //search threads - for RAG
-export async function searchThreads(workspaceId, embedding, limit = 5) {
+export async function searchThreads(workspaceId, embedding, allowedChannels, limit = 5) {
   const { rows } = await pool.query(
     `SELECT thread_ts, channel_id, content, message_count, last_message_at,
             1 - (embedding <=> $2::vector) AS similarity
      FROM thread_embeddings
      WHERE workspace_id = $1
        AND embedding IS NOT NULL
+       AND channel_id = ANY($3::text[])
      ORDER BY embedding <=> $2::vector
-     LIMIT $3`,
-    [workspaceId, JSON.stringify(embedding), limit],
+     LIMIT $4`,
+    [workspaceId, JSON.stringify(embedding), allowedChannels, limit],
   );
   return rows;
 }
@@ -288,6 +289,62 @@ export async function getDecisions(workspaceId, channelId, limit = 10) {
   return rows;
 }
 
+// Upsert user's accessible channels — called on every command
+export async function upsertUserChannels(workspaceId, userId, channels) {
+  if (!channels.length) return;
+
+  const values = channels
+    .map((_, i) => `($1, $2, $${i * 3 + 3}, $${i * 3 + 4}, NOW())`)
+    .join(", ");
+
+  const params = [workspaceId, userId];
+  channels.forEach((c) => {
+    params.push(c.channel_id);
+    params.push(c.is_private);
+  });
+
+  await pool.query(
+    `INSERT INTO user_channel_memberships
+      (workspace_id, user_id, channel_id, is_private, synced_at)
+     VALUES ${values}
+     ON CONFLICT (workspace_id, user_id, channel_id)
+     DO UPDATE SET
+       is_private = EXCLUDED.is_private,
+       synced_at = NOW()`,
+    params
+  );
+}
+
+// Get accessible channel IDs for a user — used to filter all search queries
+export async function getAccessibleChannels(workspaceId, userId) {
+  const { rows } = await pool.query(
+    `SELECT channel_id
+     FROM user_channel_memberships
+     WHERE workspace_id = $1
+       AND user_id = $2`,
+    [workspaceId, userId]
+  );
+  return rows.map((r) => r.channel_id);
+}
+
+// Check if membership needs re-sync — stale after 10 minutes
+export async function isMembershipStale(workspaceId, userId) {
+  const { rows } = await pool.query(
+    `SELECT synced_at
+     FROM user_channel_memberships
+     WHERE workspace_id = $1
+       AND user_id = $2
+     ORDER BY synced_at DESC
+     LIMIT 1`,
+    [workspaceId, userId]
+  );
+
+  if (rows.length === 0) return true;
+
+  const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
+  return new Date(rows[0].synced_at) < tenMinutesAgo;
+}
+
 // Fetch messages for summarization — current channel, last 7 days
 export async function getSummaryMessages(workspaceId, channelId, from, to) {
   const { rows } = await pool.query(
@@ -307,20 +364,21 @@ export async function getSummaryMessages(workspaceId, channelId, from, to) {
 }
 
 // Hybrid search — vector similarity + keyword fallback
-export async function searchHybrid(workspaceId, embedding, keyword, limit = 5) {
+export async function searchHybrid(workspaceId, embedding, keyword, allowedChannels, limit = 5) {
   const { rows } = await pool.query(
     `SELECT thread_ts, channel_id, content, message_count, last_message_at,
             1 - (embedding <=> $2::vector) AS similarity
      FROM thread_embeddings
      WHERE workspace_id = $1
        AND embedding IS NOT NULL
+       AND channel_id = ANY($3::text[])
        AND (
          (embedding <=> $2::vector) < 0.5
-         OR content ILIKE $3
+         OR content ILIKE $4
        )
      ORDER BY embedding <=> $2::vector
-     LIMIT $4`,
-    [workspaceId, JSON.stringify(embedding), `%${keyword}%`, limit]
+     LIMIT $5`,
+    [workspaceId, JSON.stringify(embedding), allowedChannels, `%${keyword}%`, limit]
   );
   return rows;
 }
