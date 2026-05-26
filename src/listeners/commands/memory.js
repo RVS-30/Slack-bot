@@ -4,7 +4,7 @@ import { summarizeChannel } from "../../services/summary.service.js";
 import { logInteraction } from "../../services/context.service.js";
 import { searchMemory } from "../../services/search.service.js";
 export function registerMemoryCommand(app) {
-  app.command("/memory", async ({ command, ack, respond }) => {
+  app.command("/memory", async ({ command, ack, respond, client }) => {
     await ack();
 
     const [subcommand, ...rest] = command.text.trim().split(" ");
@@ -49,7 +49,7 @@ export function registerMemoryCommand(app) {
               elements: [
                 {
                   type: "mrkdwn",
-                  text: `MemGo · <@${command.user_id}> · <!date^${Math.floor(Date.now() / 1000)}^{time}|now>`,
+                  text: `MemGo · <@${command.user_id}> · <!date^${Math.floor(Date.now() / 1000)}^{time}|now> · Results reflect messages up to 5 min ago`,
                 },
               ],
             },
@@ -87,7 +87,11 @@ export function registerMemoryCommand(app) {
       );
 
       try {
-        const decisions = await getDecisions(command.team_id, 10);
+        const decisions = await getDecisions(
+          command.team_id,
+          command.channel_id,
+          10,
+        );
 
         if (decisions.length === 0) {
           await respond({
@@ -183,7 +187,14 @@ export function registerMemoryCommand(app) {
       });
 
       try {
-        summarizeChannel(command.team_id, command.user_id, command.channel_id);
+        const summary = await summarizeChannel(
+          command.team_id,
+          command.user_id,
+          command.channel_id,
+        );
+
+        const wasTruncated = summary.length > 2900;
+        const displaySummary = truncateForSlack(summary);
 
         await respond({
           replace_original: true,
@@ -195,7 +206,7 @@ export function registerMemoryCommand(app) {
             { type: "divider" },
             {
               type: "section",
-              text: { type: "mrkdwn", text: summary },
+              text: { type: "mrkdwn", text: displaySummary },
             },
             {
               type: "context",
@@ -208,6 +219,35 @@ export function registerMemoryCommand(app) {
             },
           ],
         });
+        if (wasTruncated) {
+          await client.chat.postEphemeral({
+            channel: command.channel_id,
+            user: command.user_id,
+            blocks: [
+              {
+                type: "header",
+                text: {
+                  type: "plain_text",
+                  text: "Full Channel Summary (last 7 days)",
+                },
+              },
+              { type: "divider" },
+              {
+                type: "section",
+                text: { type: "mrkdwn", text: truncateForSlack(summary, 2900) },
+              },
+              {
+                type: "context",
+                elements: [
+                  {
+                    type: "mrkdwn",
+                    text: `MemGo · Only visible to you · <@${command.user_id}>`,
+                  },
+                ],
+              },
+            ],
+          });
+        }
       } catch (err) {
         console.error("❌ /memory summarize error:", err);
         await respond({
@@ -272,7 +312,7 @@ export function registerMemoryCommand(app) {
             elements: [
               {
                 type: "mrkdwn",
-                text: `<#${r.channel_id}> · ${r.message_count} message(s) · Last activity: ${r.last_message_at} · ${r.similarity}% match`,
+                text: `<#${r.channel_id}> · ${r.message_count} message(s) · Last activity: ${r.last_message_at} · ${r.similarity}% match · <https://slack.com/archives/${r.channel_id}/p${r.thread_ts.replace(".", "")}|View thread>`,
               },
             ],
           },
@@ -296,7 +336,7 @@ export function registerMemoryCommand(app) {
               elements: [
                 {
                   type: "mrkdwn",
-                  text: `MemGo · ${results.length} result(s) · <@${command.user_id}> · <!date^${Math.floor(Date.now() / 1000)}^{time}|now>`,
+                  text: `MemGo · ${results.length} result(s) · <@${command.user_id}> · <!date^${Math.floor(Date.now() / 1000)}^{time}|now> · Results reflect messages up to 5 min ago`,
                 },
               ],
             },

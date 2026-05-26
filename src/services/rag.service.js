@@ -37,10 +37,17 @@ export async function answerFromMemory(
   console.log(`${CYAN}   Q: "${question}"${RESET}`);
 
   // Fetch session context
-  const contextRows = await getContextForCommand(workspaceId, userId, channelId, "ask");
+  const contextRows = await getContextForCommand(
+    workspaceId,
+    userId,
+    channelId,
+    "ask",
+  );
   const priorContext = formatContextForPrompt(contextRows);
   if (priorContext) {
-    console.log(`${CYAN}   ↳ Prior context entries: ${contextRows.length}${RESET}`);
+    console.log(
+      `${CYAN}   ↳ Prior context entries: ${contextRows.length}${RESET}`,
+    );
   }
 
   let questionVector;
@@ -60,26 +67,43 @@ export async function answerFromMemory(
   const threads = await searchThreads(workspaceId, questionVector, 5);
   console.log(`${YELLOW}   ↳ Threads retrieved: ${threads.length}${RESET}`);
 
-  if (threads.length === 0) {
+  // Dedup — remove threads already seen in prior session context
+  const seenThreadTs = new Set(
+    contextRows.flatMap((r) => {
+      const matches = r.output?.match(/thread_ts:(\S+)/g) || [];
+      return matches.map((m) => m.replace("thread_ts:", ""));
+    }),
+  );
+
+  const dedupedThreads = threads.filter((t) => !seenThreadTs.has(t.thread_ts));
+  console.log(`${YELLOW}   ↳ After dedup: ${dedupedThreads.length}${RESET}`);
+
+  if (dedupedThreads.length === 0) {
     const fallback =
       "No relevant memory found yet. Send some messages in Slack, wait a few minutes, and try again.";
-    logInteraction(workspaceId, userId, channelId, "ask", question, fallback, { threadsUsed: 0 });
+    logInteraction(workspaceId, userId, channelId, "ask", question, fallback, {
+      threadsUsed: 0,
+    });
     return fallback;
   }
 
-  const context = threads
+  const context = dedupedThreads
     .map((t, i) => `[Thread ${i + 1}]\n${t.content}`)
     .join("\n\n---\n\n");
 
   const prompt = `You are a workspace memory assistant for a Slack workspace.
 Today is ${new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}.
-${priorContext ? `
+${
+  priorContext
+    ? `
 The user has recently interacted with MemGo in this channel. Use this as conversational context to resolve references and avoid asking for information already established:
 
 --- Prior Session Context ---
 ${priorContext}
 --- End Prior Context ---
-` : ""}
+`
+    : ""
+}
 Answer the question using ONLY the workspace memory context below. If the answer is not in the context, say so clearly.
 Be concise and direct.
 
@@ -110,7 +134,9 @@ Question: ${question}`;
     );
 
     // Non-blocking log
-    logInteraction(workspaceId, userId, channelId, "ask", question, answer, { threadsUsed: threads.length });
+    logInteraction(workspaceId, userId, channelId, "ask", question, answer, {
+      threadsUsed: dedupedThreads.length,
+    });
 
     return answer;
   } catch (err) {

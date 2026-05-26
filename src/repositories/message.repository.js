@@ -271,18 +271,19 @@ export async function insertMemoryQuery(
 }
 
 // Fetch recent decisions for a workspace
-export async function getDecisions(workspaceId, limit = 10) {
+export async function getDecisions(workspaceId, channelId, limit = 10) {
   const { rows } = await pool.query(
     `SELECT m.user_id, m.text, m.importance_score, m.entities, m.topic_tags, m.slack_timestamp,
             u.display_name
      FROM messages m
      LEFT JOIN users u ON u.user_id = m.user_id AND u.workspace_id = m.workspace_id
      WHERE m.workspace_id = $1
+       AND m.channel_id = $2
        AND m.message_type = 'decision'
        AND m.deleted = false
      ORDER BY m.slack_timestamp DESC
-     LIMIT $2`,
-    [workspaceId, limit],
+     LIMIT $3`,
+    [workspaceId, channelId, limit]
   );
   return rows;
 }
