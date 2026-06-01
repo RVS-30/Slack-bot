@@ -252,11 +252,25 @@ Any time you add new scopes, go to **OAuth & Permissions** → **Reinstall to Wo
 ### 5. Run
 
 ```bash
+npm run dev
+
 # Development (with ngrok)
 ngrok http 4390
-# Set your ngrok URL in Slack app settings
+# Copy the generated ngrok URL (e.g. https://3660-103-171-48-160.ngrok-free.app)
 
-npm start
+🔗 Slack App Setup
+
+After starting your local server and ngrok, follow these steps to configure your Slack app:
+
+Go to your Slack App settings.
+Navigate to:
+
+Event Subscriptions → Set Request URL to:
+
+https://<your-ngrok-subdomain>.ngrok-free.app/slack/events
+Slash Commands (if used) → Set Request URL similarly with /slack/events appended.
+Ensure your local server is running and the ngrok tunnel is active while testing.
+
 ```
 
 ---
