@@ -14,7 +14,7 @@ const SESSION_WINDOW_HOURS = 2;
 const SESSION_MAX_ENTRIES = 3;
 
 // Fetch recent relevant interactions for a user in a channel
-export async function getContextForCommand(workspaceId, userId, channelId, commandType) {
+export async function getContextForCommand(workspaceId, userId, channelId, commandType, client) {
   const relevantTypes = CONTEXT_REGISTRY[commandType];
 
   // Command not in registry or explicitly wants no context
